@@ -377,6 +377,7 @@ def get_default_supported_precision(training: bool) -> str:
 
 
 def load_checkpoint(fabric: L.Fabric, model: nn.Module, checkpoint_path: Path, strict: bool = True) -> None:
+    print(f"Loading checkpoint from {checkpoint_path}")
     if isinstance(fabric.strategy, FSDPStrategy):
         fabric.load_raw(checkpoint_path, model, strict=strict)
     elif isinstance(fabric.strategy, ModelParallelStrategy):
@@ -384,6 +385,7 @@ def load_checkpoint(fabric: L.Fabric, model: nn.Module, checkpoint_path: Path, s
         
         # --- ADDED START ---
         # Clean the state dict keys by removing the '_orig_mod.' prefix
+        print("changing key values...(Model Parralel Strategy)   ")
         prefix = "_orig_mod."
         cleaned_state_dict = {
             key[len(prefix):] if key.startswith(prefix) else key: value
@@ -401,10 +403,12 @@ def load_checkpoint(fabric: L.Fabric, model: nn.Module, checkpoint_path: Path, s
         )
     else:
         state_dict = lazy_load(checkpoint_path)
+        state_dict = state_dict.get("model", state_dict)
         
         # --- ADDED START ---
         # Clean the state dict keys by removing the '_orig_mod.' prefix
         prefix = "_orig_mod."
+        print("changing key values...   others")
         cleaned_state_dict = {
             key[len(prefix):] if key.startswith(prefix) else key: value
             for key, value in state_dict.items()
@@ -412,7 +416,6 @@ def load_checkpoint(fabric: L.Fabric, model: nn.Module, checkpoint_path: Path, s
         state_dict = cleaned_state_dict
         # --- ADDED END ---
         
-        state_dict = state_dict.get("model", state_dict)
         model.load_state_dict(state_dict, strict=strict)
 
 
