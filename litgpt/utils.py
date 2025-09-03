@@ -381,6 +381,17 @@ def load_checkpoint(fabric: L.Fabric, model: nn.Module, checkpoint_path: Path, s
         fabric.load_raw(checkpoint_path, model, strict=strict)
     elif isinstance(fabric.strategy, ModelParallelStrategy):
         state_dict = torch.load(checkpoint_path, mmap=True)
+        
+        # --- ADDED START ---
+        # Clean the state dict keys by removing the '_orig_mod.' prefix
+        prefix = "_orig_mod."
+        cleaned_state_dict = {
+            key[len(prefix):] if key.startswith(prefix) else key: value
+            for key, value in state_dict.items()
+        }
+        state_dict = cleaned_state_dict
+        # --- ADDED END ---
+        
         load_from_full_model_state_dict(
             model=model,
             full_sd=state_dict,
@@ -390,6 +401,17 @@ def load_checkpoint(fabric: L.Fabric, model: nn.Module, checkpoint_path: Path, s
         )
     else:
         state_dict = lazy_load(checkpoint_path)
+        
+        # --- ADDED START ---
+        # Clean the state dict keys by removing the '_orig_mod.' prefix
+        prefix = "_orig_mod."
+        cleaned_state_dict = {
+            key[len(prefix):] if key.startswith(prefix) else key: value
+            for key, value in state_dict.items()
+        }
+        state_dict = cleaned_state_dict
+        # --- ADDED END ---
+        
         state_dict = state_dict.get("model", state_dict)
         model.load_state_dict(state_dict, strict=strict)
 
