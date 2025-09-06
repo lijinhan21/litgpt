@@ -577,6 +577,18 @@ def convert_lit_checkpoint(checkpoint_dir: Path, output_dir: Path) -> None:
         lit_weights = lazy_load(checkpoint_dir / "lit_model.pth")
         lit_weights = lit_weights.get("model", lit_weights)
         check_conversion_supported(lit_weights)
+        
+         # --- ADDED START ---
+        # Clean the keys by removing the '_orig_mod.' prefix
+        prefix = "_orig_mod."
+        print("changing key values...   others")
+        cleaned_lit_weights = {
+            key[len(prefix):] if key.startswith(prefix) else key: value
+            for key, value in lit_weights.items()
+        }
+        lit_weights = cleaned_lit_weights
+        # --- ADDED END ---
+        
         copy_fn(sd, lit_weights, saver=saver)
         gc.collect()
         saver.save(sd)
