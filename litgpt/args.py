@@ -21,6 +21,10 @@ class TrainArgs:
     """Number of iterations with learning rate warmup active"""
     lr_warmup_fraction: Optional[float] = None
     """The fraction of an epoch to use for learning rate warmup"""
+    lr_decay_steps: Optional[int] = 100
+    """Number of iterations with learning rate warmup active"""
+    lr_decay_fraction: Optional[float] = None
+    """The fraction of an epoch to use for learning rate warmup"""
     epochs: Optional[int] = None
     """Number of epochs to train on"""
     # TODO: `pretrain` is the only script using `max_tokens` explicitly. replace it with epoch_size*epochs?
@@ -53,6 +57,19 @@ class TrainArgs:
                 f" Got {self.lr_warmup_steps} lr_warmup_steps and {self.max_steps} max_steps.",
                 UserWarning,
             )
+            
+        if self.lr_decay_fraction and self.lr_decay_steps:
+            raise ValueError(
+                "Can't provide both `--train.lr_decay_fraction` and `--train.lr_decay_steps`. Choose one."
+            )
+        if self.lr_decay_fraction and not (0 <= self.lr_decay_fraction <= 1):
+            raise ValueError("`--train.lr_decay_fraction` must be between 0 and 1.")
+        if self.lr_decay_steps and self.max_steps and (self.lr_decay_steps >= self.max_steps):
+            warnings.warn(
+                "`--train.lr_decay_steps` should be less than `--train.max_steps`."
+                f" Got {self.lr_decay_steps} lr_decay_steps and {self.max_steps} max_steps.",
+                UserWarning,
+            )
 
     def gradient_accumulation_iters(self, devices: int, num_nodes: int = 1) -> int:
         """Number of iterations between gradient synchronizations"""
@@ -72,6 +89,15 @@ class TrainArgs:
             return min(max_iters, math.ceil(self.lr_warmup_fraction * len(train_dataloader)))
         if self.lr_warmup_steps:
             return min(max_iters, self.lr_warmup_steps * self.gradient_accumulation_iters(devices, num_nodes))
+        return 0
+    
+    def decay_iters(self, devices: int, num_nodes: int, max_iters: int, train_dataloader) -> int:
+        """Number of iterations to decay the learning rate."""
+        print("calculate decay iters", "devices=", devices, "num_nodes=", num_nodes, "max_iters=", max_iters, "train_dataloader=", len(train_dataloader))
+        if self.lr_decay_fraction:
+            return min(max_iters, math.ceil(self.lr_decay_fraction * max_iters))
+        if self.lr_decay_steps:
+            return min(max_iters, self.lr_decay_steps * self.gradient_accumulation_iters(devices, num_nodes))
         return 0
 
 

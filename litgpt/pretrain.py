@@ -330,13 +330,14 @@ def fit(
     total_t0 = time.perf_counter()
 
     warmup_iters = train.warmup_iters(devices, num_nodes, max_iters, train_dataloader)
+    decay_iters = train.decay_iters(devices, num_nodes, max_iters, train_dataloader)
 
     for train_data in train_iterator:
         if state["iter_num"] >= max_iters:
             break
 
         # determine and set the learning rate for this iteration
-        lr = get_lr(optimizer.defaults["lr"], state["iter_num"], warmup_iters, max_iters, train.min_lr)
+        lr = get_lr(optimizer.defaults["lr"], state["iter_num"], warmup_iters, decay_iters, max_iters, train.min_lr)
         for param_group in optimizer.param_groups:
             param_group["lr"] = lr
 
@@ -458,7 +459,7 @@ def get_dataloaders(
 
 
 # learning rate decay scheduler (cosine with linear warmup)
-def get_lr(learning_rate: float, it: int, warmup_iters: int, max_iters: int, min_lr: float) -> float:
+def get_lr_cos(learning_rate: float, it: int, warmup_iters: int, max_iters: int, min_lr: float) -> float:
     # 1) linear warmup for warmup_iters steps
     if it < warmup_iters:
         return learning_rate * it / warmup_iters
@@ -471,6 +472,27 @@ def get_lr(learning_rate: float, it: int, warmup_iters: int, max_iters: int, min
     coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))  # coeff ranges 0..1
     return min_lr + coeff * (learning_rate - min_lr)
 
+# learning rate decay scheduler (wsd)
+def get_lr(learning_rate: float, it: int, warmup_iters: int, decay_iters: int, max_iters: int, min_lr: float) -> float:
+    # print("learning rate=", learning_rate, "it=", it, "warmup_iters=", warmup_iters, "decay_iters=", decay_iters, "max_iters=", max_iters, "min_lr=", min_lr)
+    # 1) linear warmup for warmup_iters steps
+    if it < warmup_iters:
+        # print("warmup phase", "lr=", learning_rate * it / warmup_iters)
+        return learning_rate * it / warmup_iters
+    # 2) if it > max_iters, return min learning rate
+    if it > max_iters:
+        # print("post phase", "lr=", min_lr)
+        return min_lr
+    # 3) if it < (max_iters - decay_iters), return learning rate
+    if it < (max_iters - decay_iters):
+        # print("constant phase", "lr=", learning_rate)
+        return learning_rate
+    # 4) if it >= (max_iters - decay_iters), use linear decay down to min learning rate
+    decay_ratio = (it - max_iters + decay_iters) / decay_iters
+    assert 0 <= decay_ratio <= 1
+    coeff = 1 - decay_ratio  # coeff ranges 0..1
+    # print("decay phase", "lr=", min_lr + coeff * (learning_rate - min_lr))
+    return min_lr + coeff * (learning_rate - min_lr)
 
 def initialize_weights(fabric: L.Fabric, model: GPT, n_layer: int, n_embd: int) -> None:
     """GPT-NeoX weight initialization (https://arxiv.org/abs/2204.06745)."""
