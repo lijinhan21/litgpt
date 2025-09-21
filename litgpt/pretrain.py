@@ -515,6 +515,39 @@ def initialize_weights(fabric: L.Fabric, model: GPT, n_layer: int, n_embd: int) 
     if not isinstance(fabric.strategy, FSDPStrategy):
         reset_parameters(model)
 
+# def initialize_weights(fabric: L.Fabric, model: GPT, n_layer: int, n_embd: int) -> None:
+#     """GPT weight initialization using fixed std=0.03227 as in official config"""
+    
+#     def init_weights(module, std):
+#         nn.init.normal_(module.weight, mean=0.0, std=std)
+#         if getattr(module, "bias", None) is not None:
+#             nn.init.zeros_(module.bias)
+
+#     # 使用固定的标准差 0.03227，而不是动态计算
+#     fixed_std = 0.04166
+    
+#     # 第一遍：处理所有 Embedding 和 Linear 层
+#     for mod in model.modules():
+#         if isinstance(mod, (nn.Embedding, nn.Linear)):
+#             mod.reset_parameters = partial(init_weights, mod, std=fixed_std)
+
+#     # 第二遍：特别处理 LLaMAMLP 和 CausalSelfAttention 中的 proj 层
+#     # 注意：这些层的 proj 已经在第一遍中被处理过了，因为它们是 nn.Linear
+#     # 这里需要确保它们也使用相同的固定标准差
+#     for mod in model.modules():
+#         if isinstance(mod, (LLaMAMLP, CausalSelfAttention)):
+#             # 确保 proj 层使用相同的固定标准差
+#             if hasattr(mod, 'proj') and isinstance(mod.proj, nn.Linear):
+#                 mod.proj.reset_parameters = partial(init_weights, mod.proj, std=fixed_std)
+
+#     # 如果使用了 FSDPStrategy，可能需要特殊的处理
+#     # 如果没有使用 FSDP，确保所有参数都被正确初始化
+#     if not isinstance(fabric.strategy, FSDPStrategy):
+#         # 确保调用 reset_parameters 来实际执行初始化
+#         for module in model.modules():
+#             if hasattr(module, 'reset_parameters'):
+#                 module.reset_parameters()
+
 
 def save_checkpoint(fabric, state, tokenizer_dir, checkpoint_file):
     model = state["model"]

@@ -549,6 +549,8 @@ def convert_lit_checkpoint(checkpoint_dir: Path, output_dir: Path) -> None:
     pprint(locals())
 
     config = Config.from_file(checkpoint_dir / "model_config.yaml")
+    print("checkpoint dir=", checkpoint_dir)
+    print("config=", config)
 
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / "model.pth"
@@ -581,7 +583,7 @@ def convert_lit_checkpoint(checkpoint_dir: Path, output_dir: Path) -> None:
          # --- ADDED START ---
         # Clean the keys by removing the '_orig_mod.' prefix
         prefix = "_orig_mod."
-        print("changing key values...   others")
+        print("changing key values... in convert lit checkpoint")
         cleaned_lit_weights = {
             key[len(prefix):] if key.startswith(prefix) else key: value
             for key, value in lit_weights.items()

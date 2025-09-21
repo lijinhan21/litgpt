@@ -43,15 +43,17 @@ class LitData(DataModule):
 
     def train_dataloader(self) -> DataLoader:
         input_dir = os.path.join(self.data_path, self.split_names[0]) if self.split_names else str(self.data_path)
+        print("train dataloader dir", input_dir)
         return self._dataloader(input_dir=input_dir, train=True)
 
     def val_dataloader(self) -> DataLoader:
         input_dir = os.path.join(self.data_path, self.split_names[1]) if self.split_names else str(self.data_path)
+        print("validation dataloader dir", input_dir)
         return self._dataloader(input_dir=input_dir, train=False)
 
     def _dataloader(self, input_dir: str, train: bool):
         from litdata.streaming import StreamingDataLoader, StreamingDataset, TokensLoader
-
+        print("!!!!!!block size=", self.seq_length)
         dataset = StreamingDataset(
             input_dir=input_dir,
             item_loader=TokensLoader(block_size=self.seq_length),

@@ -409,11 +409,13 @@ def load_checkpoint(fabric: L.Fabric, model: nn.Module, checkpoint_path: Path, s
         # Clean the state dict keys by removing the '_orig_mod.' prefix
         prefix = "_orig_mod."
         print("changing key values...   others")
+        # print("previous key values=", state_dict.keys())
         cleaned_state_dict = {
             key[len(prefix):] if key.startswith(prefix) else key: value
             for key, value in state_dict.items()
         }
         state_dict = cleaned_state_dict
+        # print("after cleaning, state_dict.keys:", state_dict.keys())
         # --- ADDED END ---
         
         model.load_state_dict(state_dict, strict=strict)
@@ -542,6 +544,16 @@ def copy_config_files(source_dir: Path, out_dir: Path) -> None:
         if src_path.exists():
             shutil.copy(src_path, out_dir)
 
+def copy_tokenizer_files(source_dir: Path, out_dir: Path) -> None:
+    """Copies the specified configuration and tokenizer files into the output directory."""
+
+    config_files = ["config.json", "generation_config.json", "model_config.yaml"]
+    tokenizer_files = ["tokenizer.json", "tokenizer.model", "tokenizer_config.json"]
+
+    for file_name in tokenizer_files:
+        src_path = source_dir / file_name
+        if src_path.exists():
+            shutil.copy(src_path, out_dir)
 
 def CLI(*args: Any, **kwargs: Any) -> Any:
     from jsonargparse import CLI, set_config_read_mode, set_docstring_parse_options
