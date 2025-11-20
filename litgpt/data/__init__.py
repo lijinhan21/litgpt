@@ -15,6 +15,10 @@ from litgpt.data.openwebtext import OpenWebText
 from litgpt.data.text_files import TextFiles
 from litgpt.data.tinyllama import TinyLlama
 from litgpt.data.tinystories import TinyStories
+from litgpt.data.ultrachat_200k import UltraChat_200k
+from litgpt.data.ultrachat_200k_nocomma import UltraChat_200k_nocomma
+from litgpt.data.ultrachat_200k_safetag import UltraChat_200k_safetag
+from litgpt.data.ultrachat_200k_qwen3guardtag import UltraChat_200k_qwen3guardtag
 
 __all__ = [
     "Alpaca",
@@ -34,4 +38,8 @@ __all__ = [
     "TinyStories",
     "MicroLlama",
     "get_sft_collate_fn",
+    'UltraChat_200k',
+    'UltraChat_200k_nocomma',
+    'UltraChat_200k_safetag',
+    'UltraChat_200k_qwen3guardtag',
 ]

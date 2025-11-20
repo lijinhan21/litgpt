@@ -379,7 +379,30 @@ def get_default_supported_precision(training: bool) -> str:
 def load_checkpoint(fabric: L.Fabric, model: nn.Module, checkpoint_path: Path, strict: bool = True) -> None:
     print(f"Loading checkpoint from {checkpoint_path}")
     if isinstance(fabric.strategy, FSDPStrategy):
+        print("here we are, loading checkpoint with FSDPStrategy")
         fabric.load_raw(checkpoint_path, model, strict=strict)
+        
+        # state_dict = torch.load(checkpoint_path, mmap=True)
+        
+        # if "model" in state_dict:
+        #     fabric.print(f"Extracting 'model' state_dict from checkpoint: {checkpoint_path}")
+        #     state_dict = state_dict["model"]
+        
+        # prefix = "_orig_mod."
+        # cleaned_state_dict = {
+        #     key[len(prefix):] if key.startswith(prefix) else key: value
+        #     for key, value in state_dict.items()
+        # }
+        # state_dict = cleaned_state_dict
+        
+        # from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+        # from torch.distributed.fsdp.api import StateDictType, FullStateDictConfig
+
+        # full_state_dict_config = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
+        
+        # with FSDP.state_dict_type(model, StateDictType.FULL_STATE_DICT, full_state_dict_config):
+        #     model.load_state_dict(state_dict, strict=strict)
+        
     elif isinstance(fabric.strategy, ModelParallelStrategy):
         state_dict = torch.load(checkpoint_path, mmap=True)
         

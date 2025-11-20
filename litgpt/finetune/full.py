@@ -154,7 +154,9 @@ def main(
 
     fabric.print(f"Number of trainable parameters: {num_parameters(model, requires_grad=True):,}")
 
-    model = fabric.setup(model)
+    model = torch.compile(model)
+    model = fabric.setup(model, _reapply_compile=False)
+    # model = fabric.setup(model)
 
     optimizer = instantiate_torch_optimizer(optimizer, model.parameters())
     optimizer = fabric.setup_optimizers(optimizer)
@@ -166,7 +168,29 @@ def main(
         fabric.print(f"Resuming training from {resume}")
         fabric.load(resume, state)
     else:
-        load_checkpoint(fabric, state["model"], checkpoint_path)
+        fabric.load(checkpoint_path, {"model": state["model"]})
+        
+        # # load_checkpoint(fabric, state["model"], checkpoint_path, strict=False)
+        # checkpoint = torch.load(checkpoint_path, map_location="cpu")
+        # model_state_dict = checkpoint.get("model", checkpoint)  # Try "model" key, fallback to full checkpoint
+
+        # # If the checkpoint was saved with _orig_mod prefix (from FSDP), you might need to adjust keys
+        # if any(key.startswith("_orig_mod.") for key in model_state_dict.keys()):
+        #     # Remove the _orig_mod prefix if your current model doesn't have it
+        #     new_state_dict = {}
+        #     for key, value in model_state_dict.items():
+        #         if key.startswith("_orig_mod."):
+        #             new_key = key.replace("_orig_mod.", "")
+        #             new_state_dict[new_key] = value
+        #         else:
+        #             new_state_dict[key] = value
+        #     model_state_dict = new_state_dict
+
+        # state["model"].load_state_dict(model_state_dict, strict=False)
+        
+
+        # load_checkpoint(fabric, state, checkpoint_path)
+    # state = {"model": state["model"], "optimizer": optimizer, "scheduler": scheduler, "iter_num": 0, "step_count": 0}
 
     train_time = time.perf_counter()
     token_counts = fit(
