@@ -15,7 +15,7 @@ from litgpt.tokenizer import Tokenizer
 import string
 
 @dataclass
-class Reflect_v1_dataset(DataModule):
+class Mixed_UltraChat200k_harmfulhexphi_wildguardmix_wildjailbreak_RawData(DataModule):
     """LIMA data module for supervised finetuning."""
 
     mask_prompt: bool = False
@@ -32,7 +32,7 @@ class Reflect_v1_dataset(DataModule):
     """How many DataLoader processes to use for loading."""
     include_multiturn_conversations: bool = False
     """Whether to include multi-turn conversations in the dataset."""
-    repo_id: str = "/mnt/cephfs/safe_cot_pt/data/hf_25B_with_api/reflect_v1_results_log.jsonl"
+    repo_id: str = "HuggingFaceH4/ultrachat_200k" 
     """The Hugging Face dataset repository ID from where to download the data."""
     access_token: Optional[str] = field(repr=False, default=os.getenv("HF_TOKEN"))
     """The Hugging Face API token to use for authentication. Can also be set through the
@@ -63,24 +63,28 @@ class Reflect_v1_dataset(DataModule):
         self.max_seq_length = -1 if max_seq_length is None else max_seq_length
 
     def prepare_data(self) -> None:
-        from datasets import load_from_disk, load_dataset
-
-        data = load_dataset(
-            "json", 
-            data_files=self.repo_id, 
-            split="train"
-        )
+        pass
 
     def setup(self, stage: str = "") -> None:
-        from datasets import load_dataset, load_from_disk
-
-        # dataset = load_dataset(self.repo_id, token=self.access_token)
-        dataset = load_dataset(
-            "json", 
-            data_files=self.repo_id, 
-            split="train"
-        )
-        data = format_dataset(dataset['result'], self.include_multiturn_conversations)
+        from datasets import load_dataset, Dataset
+        import json
+        
+        ultrachat200k_dataset = load_dataset(self.repo_id)['train_sft']
+        
+        harmful_hexphi_dataset = []
+        with open('/mnt/cephfs/safe_cot_pt/hf_datasets/harmful_hexphi/Harmful-HEx-PHI.jsonl', 'r', encoding='utf-8') as f:
+            for line in f:
+                json_object = json.loads(line.strip())
+                harmful_hexphi_dataset.append({'messages': json_object})
+        harmful_hexphi_dataset = Dataset.from_list(harmful_hexphi_dataset)
+        
+        wildguardmix_dataset = load_dataset("allenai/wildguardmix", "wildguardtrain")
+        wildguardmix_dataset = wildguardmix_dataset.map(lambda x: {"messages": [{"role": "user", "content": x["prompt"]}, {"role": "assistant", "content": x["response"]}]})['train']
+            
+        wildjailbreak_dataset = load_dataset("allenai/wildjailbreak", "train", delimiter="\t", keep_default_na=False)
+        wildjailbreak_dataset = wildjailbreak_dataset.map(lambda x: {"messages": [{"role": "user", "content": x["vanilla"]}, {"role": "assistant", "content": x["completion"]}]})['train']
+        
+        data = format_dataset(ultrachat200k_dataset, harmful_hexphi_dataset, wildguardmix_dataset, wildjailbreak_dataset, self.include_multiturn_conversations)
 
         # Partition the dataset into train and test
         train_data, test_data = random_split(
@@ -126,20 +130,17 @@ class Reflect_v1_dataset(DataModule):
             collate_fn=get_sft_collate_fn(max_seq_length=self.max_seq_length, ignore_index=self.ignore_index),
         )
 
-def format_dataset(dataset_partition: dict, include_multi_turn_conversations: bool) -> List[dict]:
+def format_dataset(ultrachat200k_dataset: dict, harmful_hexphi_dataset: dict, wildguardmix_dataset: dict, wildjailbreak_dataset: dict, include_multi_turn_conversations: bool) -> List[dict]:
     formatted_ds = []
-    instruction = "Provide your safety assessment for the following text: "
-    for entry in dataset_partition:
-        formatted_ds.append({"instruction": instruction + entry['text'], "input": "", "output": entry["model_label"]})
+    for dataset_partition in [ultrachat200k_dataset, harmful_hexphi_dataset, wildguardmix_dataset, wildjailbreak_dataset]:
+        for entry in dataset_partition:
+            convo = entry["messages"]
+            if include_multi_turn_conversations:
+                for i in range(0, len(convo) - 1, 2):
+                    formatted_ds.append({"instruction": convo[i]['content'], "input": "", "output": convo[i + 1]['content']})
+            else:
+                if convo[0]['content'] is None or convo[1]['content'] is None:
+                    continue
+                formatted_ds.append({"instruction": convo[0]['content'], "input": "", "output": convo[1]['content']})
 
     return formatted_ds
-
-if __name__ == '__main__':
-    data_path = '/mnt/cephfs/safe_cot_pt/data/hf_25B_with_api/reflect_v1_results_log.jsonl'
-    from datasets import load_dataset
-    data = load_dataset(
-        "json", 
-        data_files=data_path, 
-        split="train"
-    )
-    print(data['result'][0].keys(), len(data))

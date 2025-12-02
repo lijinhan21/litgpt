@@ -15,7 +15,7 @@ from litgpt.tokenizer import Tokenizer
 import string
 
 @dataclass
-class Reflect_v1_dataset(DataModule):
+class Reflect_v2_dataset(DataModule):
     """LIMA data module for supervised finetuning."""
 
     mask_prompt: bool = False
@@ -32,7 +32,7 @@ class Reflect_v1_dataset(DataModule):
     """How many DataLoader processes to use for loading."""
     include_multiturn_conversations: bool = False
     """Whether to include multi-turn conversations in the dataset."""
-    repo_id: str = "/mnt/cephfs/safe_cot_pt/data/hf_25B_with_api/reflect_v1_results_log.jsonl"
+    repo_id: str = "/mnt/cephfs/safe_cot_pt/data/hf_25B_with_api/reflect_v2_results_log.jsonl"
     """The Hugging Face dataset repository ID from where to download the data."""
     access_token: Optional[str] = field(repr=False, default=os.getenv("HF_TOKEN"))
     """The Hugging Face API token to use for authentication. Can also be set through the
@@ -135,7 +135,7 @@ def format_dataset(dataset_partition: dict, include_multi_turn_conversations: bo
     return formatted_ds
 
 if __name__ == '__main__':
-    data_path = '/mnt/cephfs/safe_cot_pt/data/hf_25B_with_api/reflect_v1_results_log.jsonl'
+    data_path = '/mnt/cephfs/safe_cot_pt/data/hf_25B_with_api/reflect_v2_results_log.jsonl'
     from datasets import load_dataset
     data = load_dataset(
         "json", 

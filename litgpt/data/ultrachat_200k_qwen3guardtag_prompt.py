@@ -15,7 +15,7 @@ from litgpt.tokenizer import Tokenizer
 import string
 
 @dataclass
-class Reflect_v1_dataset(DataModule):
+class UltraChat_200k_qwen3guardtag_prompt(DataModule):
     """LIMA data module for supervised finetuning."""
 
     mask_prompt: bool = False
@@ -32,7 +32,7 @@ class Reflect_v1_dataset(DataModule):
     """How many DataLoader processes to use for loading."""
     include_multiturn_conversations: bool = False
     """Whether to include multi-turn conversations in the dataset."""
-    repo_id: str = "/mnt/cephfs/safe_cot_pt/data/hf_25B_with_api/reflect_v1_results_log.jsonl"
+    repo_id: str = "/mnt/cephfs/safe_cot_pt/data/ultrachat200k_prompt_response_tag" 
     """The Hugging Face dataset repository ID from where to download the data."""
     access_token: Optional[str] = field(repr=False, default=os.getenv("HF_TOKEN"))
     """The Hugging Face API token to use for authentication. Can also be set through the
@@ -63,24 +63,16 @@ class Reflect_v1_dataset(DataModule):
         self.max_seq_length = -1 if max_seq_length is None else max_seq_length
 
     def prepare_data(self) -> None:
-        from datasets import load_from_disk, load_dataset
+        from datasets import load_from_disk
 
-        data = load_dataset(
-            "json", 
-            data_files=self.repo_id, 
-            split="train"
-        )
+        load_from_disk(self.repo_id)
 
     def setup(self, stage: str = "") -> None:
         from datasets import load_dataset, load_from_disk
 
         # dataset = load_dataset(self.repo_id, token=self.access_token)
-        dataset = load_dataset(
-            "json", 
-            data_files=self.repo_id, 
-            split="train"
-        )
-        data = format_dataset(dataset['result'], self.include_multiturn_conversations)
+        dataset = load_from_disk(self.repo_id)
+        data = format_dataset(dataset, self.include_multiturn_conversations)
 
         # Partition the dataset into train and test
         train_data, test_data = random_split(
@@ -128,18 +120,34 @@ class Reflect_v1_dataset(DataModule):
 
 def format_dataset(dataset_partition: dict, include_multi_turn_conversations: bool) -> List[dict]:
     formatted_ds = []
-    instruction = "Provide your safety assessment for the following text: "
+
     for entry in dataset_partition:
-        formatted_ds.append({"instruction": instruction + entry['text'], "input": "", "output": entry["model_label"]})
+        convo = entry["messages"]
+        if include_multi_turn_conversations:
+            for i in range(0, len(convo) - 1, 2):
+                formatted_ds.append({"instruction": convo[i]['content'], "input": "", "output": convo[i + 1]['content']})
+        else:
+            # pick the last label from 'prompt_label'
+            match = re.search(r'(.*)\s*(<think>.*</think>)\s*$', entry["prompt_label"], re.S)
+            part1 = match.group(1).strip()
+            part2 = match.group(2).strip()
+            formatted_ds.append({"instruction": part1, "input": "", "output": part2 + entry["processed_text"]})
 
     return formatted_ds
 
 if __name__ == '__main__':
-    data_path = '/mnt/cephfs/safe_cot_pt/data/hf_25B_with_api/reflect_v1_results_log.jsonl'
-    from datasets import load_dataset
-    data = load_dataset(
-        "json", 
-        data_files=data_path, 
-        split="train"
+    data_path = '/mnt/cephfs/safe_cot_pt/data/ultrachat200k_prompt_response_tag'
+    from datasets import load_dataset, load_from_disk
+    data = load_from_disk(
+        data_path
     )
-    print(data['result'][0].keys(), len(data))
+    print(data[0].keys(), len(data), data[0])
+    
+    match = re.search(r'(.*)\s*(<think>.*</think>)\s*$', data[0]['prompt_label'], re.S)
+    part1 = match.group(1).strip()
+    part2 = match.group(2).strip()
+
+    # 结果：(part1, part2)
+    print("\n---")
+    print("✅ 最终代码产出:")
+    print((part1, part2))
