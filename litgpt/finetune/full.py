@@ -168,7 +168,10 @@ def main(
         fabric.print(f"Resuming training from {resume}")
         fabric.load(resume, state)
     else:
-        fabric.load(checkpoint_path, {"model": state["model"]})
+        try:
+            fabric.load(checkpoint_path, {"model": state["model"]})
+        except:
+            load_checkpoint(fabric, state["model"], checkpoint_path, strict=False)
         
         # # load_checkpoint(fabric, state["model"], checkpoint_path, strict=False)
         # checkpoint = torch.load(checkpoint_path, map_location="cpu")

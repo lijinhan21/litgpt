@@ -24,6 +24,8 @@ from litgpt.data.reflect_v2 import Reflect_v2_dataset
 from litgpt.data.ultrachat_200k_qwen3guardtag_prompt import UltraChat_200k_qwen3guardtag_prompt
 from litgpt.data.mixed_ultrachat200k_harmfulhexphi_wildguardmix_wildjailbreak import Mixed_UltraChat200k_harmfulhexphi_wildguardmix_wildjailbreak
 from litgpt.data.mixed_ultrachat200k_harmfulhexphi_wildguardmix_wildjailbreak_raw import Mixed_UltraChat200k_harmfulhexphi_wildguardmix_wildjailbreak_RawData
+from litgpt.data.mixed_ultrachat200k_wildguardmix_wildjailbreak import Mixed_UltraChat200k_wildguardmix_wildjailbreak
+from litgpt.data.mixed_ultrachat200k_wildguardmix_wildjailbreak_raw import Mixed_UltraChat200k_wildguardmix_wildjailbreak_RawData
 
 __all__ = [
     "Alpaca",
@@ -52,4 +54,6 @@ __all__ = [
     'UltraChat_200k_qwen3guardtag_prompt',
     'Mixed_UltraChat200k_harmfulhexphi_wildguardmix_wildjailbreak',
     'Mixed_UltraChat200k_harmfulhexphi_wildguardmix_wildjailbreak_RawData',
+    'Mixed_UltraChat200k_wildguardmix_wildjailbreak',
+    'Mixed_UltraChat200k_wildguardmix_wildjailbreak_RawData',
 ]

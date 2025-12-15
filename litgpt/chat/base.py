@@ -78,8 +78,10 @@ def process_prompt(
     prompt, model, tokenizer, prompt_style, fabric, temperature, max_new_tokens, top_k, top_p, stop_tokens
 ):
     prompt = prompt_style.apply(prompt=prompt)
+    print("prompt with prompt style: ", prompt)
     encoded_prompt = tokenizer.encode(prompt, device=fabric.device)
-
+    print("encoded_prompt: ", encoded_prompt)
+    
     if max_new_tokens is None:
         max_returned_tokens = model.max_seq_length
     else:
@@ -245,6 +247,7 @@ def main(
     prompt_style = (
         load_prompt_style(checkpoint_dir) if has_prompt_style(checkpoint_dir) else PromptStyle.from_config(config)
     )
+    print("prompt_style: ", prompt_style)
     stop_tokens = prompt_style.stop_tokens(tokenizer)
 
     if multiline:
