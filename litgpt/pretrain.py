@@ -218,13 +218,9 @@ def main(
     train_dataloader, val_dataloader = get_dataloaders(fabric, data, tokenizer, train, model.max_seq_length)
     train_dataloader, val_dataloader = fabric.setup_dataloaders(train_dataloader, val_dataloader)
 
-    if initial_checkpoint_dir:
-        fabric.load_raw(initial_checkpoint_dir / "lit_model.pth", model)
-
     state = {
         "model": model,
         "optimizer": optimizer,
-        "train_dataloader": train_dataloader,
         "iter_num": 0,
         "step_count": 0,
     }
@@ -233,6 +229,11 @@ def main(
     if resume:
         fabric.print(f"Resuming training from {resume}")
         fabric.load(resume, state)
+        # Note: train_dataloader is not included in state as it's not serializable.
+        # We'll skip batches in fit() based on iter_num to resume from the correct position.
+    elif initial_checkpoint_dir:
+        # Only load initial checkpoint if not resuming (resume takes precedence)
+        fabric.load_raw(initial_checkpoint_dir / "lit_model.pth", model)
 
     train_time = time.perf_counter()
 
@@ -322,6 +323,18 @@ def fit(
     log_iter_interval = train.log_interval * train.gradient_accumulation_iters(devices, num_nodes)
     initial_iter = state["iter_num"]
     train_iterator = CycleIterator(train_dataloader)
+
+    # Skip batches to resume from the correct position
+    # This ensures we don't reprocess data when resuming (though for pretraining with cycling data, 
+    # reprocessing is acceptable but less efficient)
+    if initial_iter > 0:
+        fabric.print(f"Skipping {initial_iter} batches to resume from iteration {initial_iter}")
+        for _ in range(initial_iter):
+            try:
+                next(train_iterator)
+            except StopIteration:
+                # If we hit the end, CycleIterator will cycle back to the beginning
+                pass
 
     running_loss = RunningMean(window=train.gradient_accumulation_iters(devices, num_nodes), sync_on_compute=False).to(
         fabric.device
@@ -514,40 +527,6 @@ def initialize_weights(fabric: L.Fabric, model: GPT, n_layer: int, n_embd: int) 
 
     if not isinstance(fabric.strategy, FSDPStrategy):
         reset_parameters(model)
-
-# def initialize_weights(fabric: L.Fabric, model: GPT, n_layer: int, n_embd: int) -> None:
-#     """GPT weight initialization using fixed std=0.03227 as in official config"""
-    
-#     def init_weights(module, std):
-#         nn.init.normal_(module.weight, mean=0.0, std=std)
-#         if getattr(module, "bias", None) is not None:
-#             nn.init.zeros_(module.bias)
-
-#     # 使用固定的标准差 0.03227，而不是动态计算
-#     fixed_std = 0.04166
-    
-#     # 第一遍：处理所有 Embedding 和 Linear 层
-#     for mod in model.modules():
-#         if isinstance(mod, (nn.Embedding, nn.Linear)):
-#             mod.reset_parameters = partial(init_weights, mod, std=fixed_std)
-
-#     # 第二遍：特别处理 LLaMAMLP 和 CausalSelfAttention 中的 proj 层
-#     # 注意：这些层的 proj 已经在第一遍中被处理过了，因为它们是 nn.Linear
-#     # 这里需要确保它们也使用相同的固定标准差
-#     for mod in model.modules():
-#         if isinstance(mod, (LLaMAMLP, CausalSelfAttention)):
-#             # 确保 proj 层使用相同的固定标准差
-#             if hasattr(mod, 'proj') and isinstance(mod.proj, nn.Linear):
-#                 mod.proj.reset_parameters = partial(init_weights, mod.proj, std=fixed_std)
-
-#     # 如果使用了 FSDPStrategy，可能需要特殊的处理
-#     # 如果没有使用 FSDP，确保所有参数都被正确初始化
-#     if not isinstance(fabric.strategy, FSDPStrategy):
-#         # 确保调用 reset_parameters 来实际执行初始化
-#         for module in model.modules():
-#             if hasattr(module, 'reset_parameters'):
-#                 module.reset_parameters()
-
 
 def save_checkpoint(fabric, state, tokenizer_dir, checkpoint_file):
     model = state["model"]
