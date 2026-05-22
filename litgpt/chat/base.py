@@ -21,6 +21,7 @@ from litgpt.utils import (
     extend_checkpoint_dir,
     get_default_supported_precision,
     load_checkpoint,
+    load_checkpoint_inference,
 )
 
 
@@ -78,9 +79,9 @@ def process_prompt(
     prompt, model, tokenizer, prompt_style, fabric, temperature, max_new_tokens, top_k, top_p, stop_tokens
 ):
     prompt = prompt_style.apply(prompt=prompt)
-    print("prompt with prompt style: ", prompt)
+    # print("prompt with prompt style: ", prompt)
     encoded_prompt = tokenizer.encode(prompt, device=fabric.device)
-    print("encoded_prompt: ", encoded_prompt)
+    # print("encoded_prompt: ", encoded_prompt)
     
     if max_new_tokens is None:
         max_returned_tokens = model.max_seq_length
@@ -231,7 +232,7 @@ def main(
                 "a higher memory consumption. In case of an OOM error, try to set `--compile=False`."
             )
             model.set_kv_cache(batch_size=1)
-    load_checkpoint(fabric, model, checkpoint_path)
+    load_checkpoint_inference(fabric, model, checkpoint_path)
     model.eval()
 
     if compile:

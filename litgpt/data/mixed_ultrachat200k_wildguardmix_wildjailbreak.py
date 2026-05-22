@@ -118,8 +118,28 @@ class Mixed_UltraChat200k_wildguardmix_wildjailbreak(DataModule):
             batch_size=self.batch_size,
             shuffle=False,
             num_workers=self.num_workers,
+            drop_last=True,
             collate_fn=get_sft_collate_fn(max_seq_length=self.max_seq_length, ignore_index=self.ignore_index),
         )
+
+def add_after_unsafe_tags(text, minlen=100, maxlen=200):
+    # find all tags, add f(segment_text) after Unsafe tags
+    segments = re.findall(r'(.*?<think>.*?</think>)', text, re.DOTALL)
+    full_text = ''
+    for i in range(len(segments)):
+        segment_text = segments[i]
+        tag = re.search(r'<think>(.*?)</think>', segment_text, re.DOTALL).group(1)
+        full_text += segment_text
+        
+        segment_text_notag = re.sub(r'<think>.*?</think>', '', segment_text, flags=re.DOTALL).strip()
+        
+        if tag.startswith(' Unsafe') or tag.startswith(' Controversial'):
+            full_text += '<|endoftext|>'
+    return full_text
+
+def post_process_text(text):
+    augmented_text1 = add_after_unsafe_tags(text)
+    return augmented_text1
 
 def format_dataset(ultrachat200k_dataset: dict, wildguardmix_dataset: dict, wildjailbreak_dataset: dict, include_multi_turn_conversations: bool) -> List[dict]:
     formatted_ds = []
@@ -141,7 +161,7 @@ def format_dataset(ultrachat200k_dataset: dict, wildguardmix_dataset: dict, wild
                 if part1 is None or part2 is None:
                     continue
                 
-                formatted_ds.append({"instruction": part1, "input": "", "output": part2 + entry["processed_text"]})
+                formatted_ds.append({"instruction": part1, "input": "", "output": post_process_text(part2 + entry["processed_text"])})
 
     return formatted_ds
 

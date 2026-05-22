@@ -24,7 +24,7 @@ class LitData(DataModule):
     train dataloader."""
     seed: int = 42
     """The random seed for shuffling the dataset."""
-    num_workers: int = 8
+    num_workers: int = 0
     """How many DataLoader processes to use for loading."""
 
     batch_size: int = field(init=False, repr=False, default=1)
@@ -61,6 +61,6 @@ class LitData(DataModule):
             seed=self.seed,
         )
         dataloader = StreamingDataLoader(
-            dataset, batch_size=self.batch_size, pin_memory=True, num_workers=self.num_workers, drop_last=True
+            dataset, batch_size=self.batch_size, pin_memory=False, num_workers=self.num_workers, drop_last=True
         )
         return dataloader

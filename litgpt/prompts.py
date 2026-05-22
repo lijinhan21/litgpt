@@ -40,6 +40,13 @@ class Default(PromptStyle):
     def stop_tokens(self, tokenizer: "Tokenizer") -> Tuple[List[int], ...]:
         return ([tokenizer.eos_id],)
 
+class Simple(PromptStyle):
+    def apply(self, prompt: str, *, sys_prompt: Optional[str] = None, **kwargs: str) -> str:
+        return f"{prompt} "
+    
+    def stop_tokens(self, tokenizer: "Tokenizer") -> Tuple[List[int], ...]:
+        return ([tokenizer.eos_id],)
+
 
 class Alpaca(PromptStyle):
     def apply(self, prompt: str, *, sys_prompt: Optional[str] = None, **kwargs: str) -> str:
@@ -51,6 +58,40 @@ class Alpaca(PromptStyle):
             return f"{sys_prompt}### Instruction:\n{prompt}\n\n### Input:\n{kwargs['input']}\n\n### Response:\n"
 
         sys_prompt = sys_prompt or (
+            "Below is an instruction that describes a task. "
+            "Write a response that appropriately completes the request.\n\n"
+        )
+        return f"{sys_prompt}### Instruction:\n{prompt}\n\n### Response:\n"
+
+class Alpaca_Hint(PromptStyle):
+    def apply(self, prompt: str, *, sys_prompt: Optional[str] = None, **kwargs: str) -> str:
+        if kwargs.get("input"):
+            sys_prompt = sys_prompt or (
+                "<think> Safe Begin instructions. </think> "
+                "Below is an instruction that describes a task, paired with an input that provides further context. "
+                "Write a response that appropriately completes the request.\n\n"
+            )
+            return f"{sys_prompt}### Instruction:\n{prompt}\n\n### Input:\n{kwargs['input']}\n\n### Response:\n"
+
+        sys_prompt = sys_prompt or (
+            "<think> Safe Begin instructions. </think> "
+            "Below is an instruction that describes a task. "
+            "Write a response that appropriately completes the request.\n\n"
+        )
+        return f"{sys_prompt}### Instruction:\n{prompt}\n\n### Response:\n"
+
+class Alpaca_Tag(PromptStyle):
+    def apply(self, prompt: str, *, sys_prompt: Optional[str] = None, **kwargs: str) -> str:
+        if kwargs.get("input"):
+            sys_prompt = sys_prompt or (
+                "<think> Safe </think> "
+                "Below is an instruction that describes a task, paired with an input that provides further context. "
+                "Write a response that appropriately completes the request.\n\n"
+            )
+            return f"{sys_prompt}### Instruction:\n{prompt}\n\n### Input:\n{kwargs['input']}\n\n### Response:\n"
+
+        sys_prompt = sys_prompt or (
+            "<think> Safe </think> "
             "Below is an instruction that describes a task. "
             "Write a response that appropriately completes the request.\n\n"
         )
@@ -420,7 +461,11 @@ class Salamandra(ChatML):
 # Maps prompt style names to PromptStyle classes
 prompt_styles: Dict[str, Type[PromptStyle]] = {
     # Dataset-specific prompt styles
+    "default": Default,
+    "simple": Simple,
     "alpaca": Alpaca,
+    "alpaca_hint": Alpaca_Hint,
+    "alpaca_tag": Alpaca_Tag,
     "flan": FLAN,
     "longform": Longform,
     # Model-specific prompt styles

@@ -120,6 +120,7 @@ class Mixed_UltraChat200k_wildguardmix_wildjailbreak_RawData(DataModule):
             batch_size=self.batch_size,
             shuffle=False,
             num_workers=self.num_workers,
+            drop_last=True,
             collate_fn=get_sft_collate_fn(max_seq_length=self.max_seq_length, ignore_index=self.ignore_index),
         )
 

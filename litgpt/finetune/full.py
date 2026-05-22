@@ -149,7 +149,7 @@ def main(
         os.makedirs(out_dir, exist_ok=True)
 
     checkpoint_path = checkpoint_dir / "lit_model.pth"
-    with fabric.init_module(empty_init=(fabric.world_size > 1)):
+    with fabric.init_module(empty_init=True):
         model = GPT(config)
 
     fabric.print(f"Number of trainable parameters: {num_parameters(model, requires_grad=True):,}")
@@ -168,10 +168,24 @@ def main(
         fabric.print(f"Resuming training from {resume}")
         fabric.load(resume, state)
     else:
-        try:
-            fabric.load(checkpoint_path, {"model": state["model"]})
-        except:
-            load_checkpoint(fabric, state["model"], checkpoint_path, strict=False)
+        fabric.print(f"Initializing model from base checkpoint: {checkpoint_path}")
+        load_checkpoint(
+            fabric=fabric,
+            model=state['model'],
+            checkpoint_path=checkpoint_path,
+            strict=True,   # 这里必须是 True
+        )
+
+    # resume = find_resume_path(resume, out_dir)
+    # if resume:
+    #     fabric.print(f"Resuming training from {resume}")
+    #     fabric.load(resume, state)
+    # else:
+    #     try:
+    #         fabric.load(checkpoint_path, {"model": state["model"]})
+    #     except:
+    #         load_checkpoint(fabric, state["model"], checkpoint_path, strict=False)
+
         
         # # load_checkpoint(fabric, state["model"], checkpoint_path, strict=False)
         # checkpoint = torch.load(checkpoint_path, map_location="cpu")
@@ -216,7 +230,10 @@ def main(
 
     # Final evaluation
     if eval.final_validation:
-        val_loss = validate(fabric, model, val_dataloader, dataclasses.replace(eval, max_iters=len(val_dataloader)))
+        fabric.print("begin final validation!")
+        fabric.barrier() 
+        val_loss = validate(fabric, model, val_dataloader, dataclasses.replace(eval, max_iters=min(2, len(val_dataloader))))
+        fabric.barrier() 
         metrics = {"val_loss": val_loss, "val_ppl": math.exp(val_loss)}
         fabric.log_dict(metrics, step=state["iter_num"])
         fabric.print(f"Final evaluation | val loss: {val_loss.item():.3f} | val ppl: {math.exp(val_loss):.3f}")
@@ -225,6 +242,7 @@ def main(
     save_path = out_dir / "final" / "lit_model.pth"
     save_path.parent.mkdir(parents=True, exist_ok=True)
     fabric.save(save_path, {"model": state["model"]})
+    fabric.print(f"Saved final checkpoint to {save_path}")
     if fabric.global_rank == 0:
         # Copy checkpoint files from original checkpoint dir
         copy_config_files(checkpoint_dir, save_path.parent)
@@ -233,6 +251,222 @@ def main(
 
 
 def fit(
+    fabric: L.Fabric,
+    state: Dict,
+    train_dataloader: DataLoader,
+    val_dataloader: DataLoader,
+    devices: int,
+    resume: Union[bool, Literal["auto"], Path],
+    checkpoint_dir: Path,
+    out_dir: Path,
+    train: TrainArgs,
+    eval: EvalArgs,
+    data: DataModule,
+    num_nodes: int = 1,
+) -> None:
+    model = state["model"]
+    optimizer = state["optimizer"]
+    scheduler = state["scheduler"]
+    tokenizer = Tokenizer(checkpoint_dir)
+    
+    # 1. Setup & Sanity Check
+    longest_seq_length, longest_seq_ix = get_longest_seq_length(
+        ConcatDataset([train_dataloader.dataset, val_dataloader.dataset])
+    )
+    model.max_seq_length = min(longest_seq_length, train.max_seq_length or float("inf"))
+    
+    # [OPTIONAL] Only print on rank 0 to reduce clutter
+    if fabric.global_rank == 0:
+        fabric.print(
+            f"The longest sequence length in the train data is {longest_seq_length}, the model's maximum sequence length is"
+            f" {model.max_seq_length} and context length is {model.config.block_size}"
+        )
+
+    token_counts = {
+        "raw_tokens": torch.tensor(0, device=fabric.device, dtype=torch.long),
+        "raw_tokens_plus_prompt_template": torch.tensor(0, device=fabric.device, dtype=torch.long),
+        "raw_tokens_plus_prompt_template_and_padding": torch.tensor(0, device=fabric.device, dtype=torch.long),
+    }
+
+    # --- [FIX] Safe Initial Validation ---
+    # Validate 前后加锁，防止有些卡跑得快
+    fabric.barrier() 
+    if eval.initial_validation:
+        val_loss = validate(fabric, model, val_dataloader, dataclasses.replace(eval, max_iters=min(1, len(val_dataloader))))
+        val_loss = f"{val_loss:.3f}"
+    else:
+        fabric.print("Verifying settings ...")
+        validate(fabric, model, val_dataloader, dataclasses.replace(eval, max_iters=2), verbose=False)  # sanity check
+        val_loss = "n/a"
+    fabric.barrier() # [FIX] Ensure everyone is done with sanity check
+    # -------------------------------------
+
+    initial_iter = state["iter_num"]
+    max_steps = train.max_steps or float("inf")
+    train_iterator = CycleIterator(train_dataloader)
+
+    # 2. Resume Logic
+    if resume:
+        resume_t0 = time.perf_counter()
+        for resume_iter in range(initial_iter):
+            next(train_iterator)
+            if resume_iter % 1000 == 0:
+                fabric.print(f"Resuming dataset: {resume_iter} / {initial_iter}")
+        
+        # [FIX] Barrier after resume is CRITICAL. 
+        # Prevents Rank 0 from starting training while Rank 1 is still fast-forwarding.
+        fabric.barrier() 
+        
+        fabric.print(
+            f"Resuming data loader finished. Took {time.perf_counter() - resume_t0:.1f} seconds to reach iteration"
+            f" {initial_iter}."
+        )
+
+    running_loss = RunningMean(window=train.gradient_accumulation_iters(devices, num_nodes), sync_on_compute=False).to(
+        fabric.device
+    )
+    
+    # [FIX] Define gradient accumulation steps explicitly
+    grad_acc_steps = train.gradient_accumulation_iters(devices, num_nodes)
+
+    fabric.barrier() # Sync before loop starts
+
+    while state["step_count"] < max_steps:
+        # --- [FIX] Synced Stopping Logic ---
+        # 即使使用 CycleIterator，不同卡的 epoch 进度也可能因为数据切分不均而不同步。
+        # 这里统一检查：如果任意一张卡认为 epoch 结束了（或者 iterator 空了），所有卡必须一起停。
+        
+        should_stop = False
+        try:
+            # 预取 batch，如果失败说明迭代器空了
+            # 注意：CycleIterator 通常是无限的，但如果依赖 epoch 计数退出，看下面：
+            if train_iterator.epoch >= train.epochs:
+                should_stop = True
+        except StopIteration:
+            should_stop = True
+
+        # 创建一个 Tensor 信号 (0=继续, 1=停止)
+        stop_signal = torch.tensor(1 if should_stop else 0, device=fabric.device)
+        # 广播信号：只要有一个人想停 (max=1)，大家就一起停
+        fabric.all_reduce(stop_signal, reduce_op="max")
+        
+        if stop_signal.item() == 1:
+            fabric.print("Stopping training: Epoch limit reached or iterator exhausted (synced).")
+            break
+        # -----------------------------------
+
+        # 既然没停，安全获取 batch
+        batch = next(train_iterator)
+
+        state["iter_num"] += 1
+        iter_t0 = time.perf_counter()
+        
+        input_ids, targets = batch["input_ids"], batch["labels"]
+
+        is_accumulating = state["iter_num"] % grad_acc_steps != 0
+        
+        with fabric.no_backward_sync(model, enabled=is_accumulating):
+            logits = model(input_ids)
+            # shift the targets such that output n predicts token n+1
+            loss = chunked_cross_entropy(logits[..., :-1, :], targets[..., 1:])
+            fabric.backward(loss / grad_acc_steps)
+
+        running_loss.update(loss.detach())
+
+        if not is_accumulating:
+            optimizer.step()
+            optimizer.zero_grad()
+            scheduler.step()
+            state["step_count"] += 1
+
+        token_counts["raw_tokens"] += batch["token_counts"]["raw"].sum().item()
+        token_counts["raw_tokens_plus_prompt_template"] += (
+            batch["token_counts"]["raw_plus_prompt_template"].sum().item()
+        )
+        token_counts["raw_tokens_plus_prompt_template_and_padding"] += input_ids.numel()
+
+        if state["iter_num"] % train.log_interval == 0:
+            loss = running_loss.compute().item()  # expensive device-to-host synchronization
+            t1 = time.perf_counter()
+            metrics = {
+                "loss": loss,
+                "iter": state["iter_num"],
+                "step": state["step_count"],
+                "epoch": train_iterator.epoch,
+                "iter_time": t1 - iter_t0,
+                "tokens": token_counts["raw_tokens_plus_prompt_template"],
+                "total_tokens": token_counts["raw_tokens_plus_prompt_template"] * fabric.world_size,
+                "learning_rate": scheduler.get_last_lr()[0],
+            }
+            if isinstance(val_loss, torch.Tensor):
+                val_loss = f"{val_loss:.3f}"
+            fabric.print(
+                f"Epoch {metrics['epoch'] + 1} | iter {metrics['iter']} step {metrics['step']} |"
+                f" loss train: {metrics['loss']:.3f},"
+                f" val: {val_loss} |"
+                f" iter time: {metrics['iter_time'] * 1000:.2f} ms"
+                f"{' (step)' if not is_accumulating else ''}"
+            )
+            fabric.log_dict(metrics, step=state["iter_num"])
+
+        # --- [FIX] Safer Validation & Checkpointing ---
+        if not is_accumulating:
+            
+            # Validation
+            if state["step_count"] % eval.interval == 0:
+                # 1. Barrier START: 确保所有卡都完成了 step 更新，且都准备好进入 validate
+                fabric.barrier()
+                
+                t0 = time.perf_counter()
+                val_loss = validate(fabric, model, val_dataloader, eval)
+                generate_example(fabric, model, tokenizer, eval, data)
+                t1 = time.perf_counter() - t0
+
+                # 2. Barrier END: 确保所有卡都跑完了 validate，再进行 all_reduce
+                # 防止 rank 0 跑完了去 reduce，rank 1 还在 validate
+                fabric.barrier()
+
+                val_loss_tensor = val_loss.detach().clone().to(fabric.device)
+                val_time_tensor = torch.tensor(t1, device=fabric.device, dtype=torch.float32)
+
+                fabric.all_reduce(val_loss_tensor, reduce_op="mean")
+                fabric.all_reduce(val_time_tensor, reduce_op="mean")
+
+                fabric.print(
+                    f"iter {state['iter_num']}: val loss {val_loss_tensor.item():.4f}, val time: {val_time_tensor.item() * 1000:.2f} ms"
+                )
+                metrics = {"val_loss": val_loss_tensor, "val_ppl": math.exp(val_loss_tensor)}
+                fabric.log_dict(metrics, step=state["iter_num"])
+                
+                # 3. Final Barrier: 确保 Logging 完成，大家一起回到 Training Loop
+                fabric.barrier()
+
+            # Checkpointing
+            if train.save_interval is not None and state["step_count"] % train.save_interval == 0:
+                # Barrier 防止某些卡还没跑完 current step 就开始存盘（虽然概率小，但在 file system 操作前同步是好习惯）
+                fabric.barrier()
+                
+                checkpoint_file = out_dir / f"step-{state['step_count']:06d}" / "lit_model.pth"
+                checkpoint_file.parent.mkdir(parents=True, exist_ok=True)
+                fabric.print(f"Saving checkpoint to {str(checkpoint_file.parent)!r}")
+                fabric.save(checkpoint_file, state)
+                if fabric.global_rank == 0:
+                    copy_config_files(checkpoint_dir, checkpoint_file.parent)
+                    save_hyperparameters(setup, checkpoint_file.parent)
+                    save_prompt_style(data.prompt_style, checkpoint_file.parent)
+                
+                # 存完一定要等！防止 Rank 0 还在写，Rank 1 跑太快去读或者做别的
+                fabric.barrier()
+
+    # Final reduction
+    total_token_counts = {}
+    for key in token_counts:
+        total = fabric.all_reduce(token_counts[key], reduce_op="sum")
+        total_token_counts[key] = total.item()
+
+    return total_token_counts
+
+def fit_pre(
     fabric: L.Fabric,
     state: Dict,
     train_dataloader: DataLoader,
@@ -266,7 +500,7 @@ def fit(
     }
 
     if eval.initial_validation:
-        val_loss = validate(fabric, model, val_dataloader, dataclasses.replace(eval, max_iters=len(val_dataloader)))
+        val_loss = validate(fabric, model, val_dataloader, dataclasses.replace(eval, max_iters=min(1, len(val_dataloader))))
         val_loss = f"{val_loss:.3f}"
     else:
         fabric.print("Verifying settings ...")

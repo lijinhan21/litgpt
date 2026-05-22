@@ -29,7 +29,7 @@ from litgpt.utils import (
     copy_config_files,
     extend_checkpoint_dir,
     get_default_supported_precision,
-    load_checkpoint,
+    load_checkpoint_inference,
     save_config,
 )
 
@@ -232,7 +232,7 @@ class LLM(torch.nn.Module):
             if checkpoint_dir is not None:
                 checkpoint_path = checkpoint_dir / "lit_model.pth"
                 check_file_size_on_cpu_and_warn(checkpoint_path, fabric.device)
-                load_checkpoint(fabric, model, checkpoint_path)
+                load_checkpoint_inference(fabric, model, checkpoint_path)
 
             model = fabric.setup_module(model)
 
@@ -374,7 +374,7 @@ class LLM(torch.nn.Module):
             model.eval()
 
             if self.checkpoint_dir is not None:
-                load_checkpoint(fabric, model, self.checkpoint_dir / "lit_model.pth")
+                load_checkpoint_inference(fabric, model, self.checkpoint_dir / "lit_model.pth")
 
             model = fabric.setup_module(model)
 

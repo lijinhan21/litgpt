@@ -375,73 +375,69 @@ def get_default_supported_precision(training: bool) -> str:
             return "16-mixed" if training else "16-true"
     return "bf16-mixed" if training else "bf16-true"
 
+def load_checkpoint(
+    fabric: L.Fabric,
+    model: torch.nn.Module,
+    checkpoint_path: Path,
+    strict: bool = True,
+) -> None:
+    from torch.distributed.fsdp import FullyShardedDataParallel as FSDP, StateDictType, FullStateDictConfig
 
-def load_checkpoint(fabric: L.Fabric, model: nn.Module, checkpoint_path: Path, strict: bool = True) -> None:
-    print(f"Loading checkpoint from {checkpoint_path}")
+    with fabric.rank_zero_first():
+        checkpoint = torch.load(checkpoint_path, map_location="cpu")
+    state_dict = checkpoint.get("model", checkpoint)
+
     if isinstance(fabric.strategy, FSDPStrategy):
-        print("here we are, loading checkpoint with FSDPStrategy")
-        fabric.load_raw(checkpoint_path, model, strict=strict)
-        
-        # state_dict = torch.load(checkpoint_path, mmap=True)
-        
-        # if "model" in state_dict:
-        #     fabric.print(f"Extracting 'model' state_dict from checkpoint: {checkpoint_path}")
-        #     state_dict = state_dict["model"]
-        
-        # prefix = "_orig_mod."
-        # cleaned_state_dict = {
-        #     key[len(prefix):] if key.startswith(prefix) else key: value
-        #     for key, value in state_dict.items()
-        # }
-        # state_dict = cleaned_state_dict
-        
-        # from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-        # from torch.distributed.fsdp.api import StateDictType, FullStateDictConfig
-
-        # full_state_dict_config = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
-        
-        # with FSDP.state_dict_type(model, StateDictType.FULL_STATE_DICT, full_state_dict_config):
-        #     model.load_state_dict(state_dict, strict=strict)
-        
-    elif isinstance(fabric.strategy, ModelParallelStrategy):
-        state_dict = torch.load(checkpoint_path, mmap=True)
-        
-        # --- ADDED START ---
-        # Clean the state dict keys by removing the '_orig_mod.' prefix
-        print("changing key values...(Model Parralel Strategy)   ")
-        prefix = "_orig_mod."
-        cleaned_state_dict = {
-            key[len(prefix):] if key.startswith(prefix) else key: value
-            for key, value in state_dict.items()
-        }
-        state_dict = cleaned_state_dict
-        # --- ADDED END ---
-        
-        load_from_full_model_state_dict(
-            model=model,
-            full_sd=state_dict,
-            device=fabric.device,
-            strict=strict,
-            cpu_offload=True,
-        )
+        fabric.load(checkpoint_path, {"model": model})
+        missing, unexpected = None, None
     else:
-        state_dict = lazy_load(checkpoint_path)
-        state_dict = state_dict.get("model", state_dict)
-        
-        # --- ADDED START ---
-        # Clean the state dict keys by removing the '_orig_mod.' prefix
+        try:
+            missing, unexpected = model.load_state_dict(state_dict, strict=strict)
+        except Exception as e:
+            # adjust 'orig_mod' prefix
+            prefix = "_orig_mod."
+            exist_prefix = any(k.startswith(prefix) for k in state_dict.keys())
+            if exist_prefix:
+                state_dict = {k[len(prefix):] if k.startswith(prefix) else k: v for k, v in state_dict.items()}
+            else:
+                # add prefix
+                state_dict = {prefix + k: v for k, v in state_dict.items()}
+            missing, unexpected = model.load_state_dict(state_dict, strict=strict)
+
+    if fabric.global_rank == 0:
+        if missing: print(f"[WARN] missing keys: {missing[:10]}")
+        if unexpected: print(f"[WARN] unexpected keys: {unexpected[:10]}")
+        if not missing and not unexpected: print("[OK] checkpoint loaded cleanly")
+
+def load_checkpoint_inference(
+    fabric: L.Fabric,
+    model: torch.nn.Module,
+    checkpoint_path: Path,
+    strict: bool = True,
+) -> None:
+    from torch.distributed.fsdp import FullyShardedDataParallel as FSDP, StateDictType, FullStateDictConfig
+
+    with fabric.rank_zero_first():
+        checkpoint = torch.load(checkpoint_path, map_location="cpu")
+    state_dict = checkpoint.get("model", checkpoint)
+
+    if isinstance(fabric.strategy, FSDPStrategy):
+        # always load as FULL_STATE_DICT
+        full_state_cfg = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
+        fabric.print(f"Loading checkpoint into FSDP with FULL_STATE_DICT: {checkpoint_path}")
+        with FSDP.state_dict_type(model, StateDictType.FULL_STATE_DICT, full_state_cfg):
+            missing, unexpected = model.load_state_dict(state_dict, strict=strict)
+    else:
+        # clear prefix
         prefix = "_orig_mod."
-        print("changing key values...   others")
-        # print("previous key values=", state_dict.keys())
-        cleaned_state_dict = {
-            key[len(prefix):] if key.startswith(prefix) else key: value
-            for key, value in state_dict.items()
-        }
-        state_dict = cleaned_state_dict
-        # print("after cleaning, state_dict.keys:", state_dict.keys())
-        # --- ADDED END ---
-        
-        model.load_state_dict(state_dict, strict=strict)
+        state_dict = {k[len(prefix):] if k.startswith(prefix) else k: v for k, v in state_dict.items()}
+        missing, unexpected = model.load_state_dict(state_dict, strict=strict)
+
+    if fabric.global_rank == 0:
+        if missing: print(f"[WARN] missing keys: {missing[:10]}")
+        if unexpected: print(f"[WARN] unexpected keys: {unexpected[:10]}")
+        if not missing and not unexpected: print("[OK] checkpoint loaded cleanly")
+
 
 
 def load_checkpoint_update(
